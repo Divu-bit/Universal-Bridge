@@ -1,5 +1,5 @@
-import { useEffect, useState, useRef } from 'react';
-import { StyleSheet, Text, View, ScrollView, Platform, Animated } from 'react-native';
+import { useEffect, useState, useRef, useCallback } from 'react';
+import { StyleSheet, Text, View, ScrollView, Platform, Animated, TouchableOpacity } from 'react-native';
 import * as Device from 'expo-device';
 import * as Notifications from 'expo-notifications';
 import Constants from 'expo-constants';
@@ -17,23 +17,58 @@ Notifications.setNotificationHandler({
 
 const BRIDGE_SERVER_URL = 'https://universal-bridge.onrender.com';
 
+interface NotificationItem {
+  id: string;
+  title: string;
+  body: string;
+  schema: any[];
+  timestamp: Date;
+  status: 'pending' | 'completed';
+}
+
 export default function HomeScreen() {
   const [expoPushToken, setExpoPushToken] = useState<string | undefined>('');
-  const [schema, setSchema] = useState<any>(null);
+  const [notifications, setNotifications] = useState<NotificationItem[]>([]);
+  const [expandedId, setExpandedId] = useState<string | null>(null);
   const notificationListener = useRef<any>(null);
   const responseListener = useRef<any>(null);
   const pulseAnim = useRef(new Animated.Value(1)).current;
   const fadeAnim = useRef(new Animated.Value(0)).current;
 
+  const addNotification = useCallback((title: string, body: string, schema: any[]) => {
+    const newNotif: NotificationItem = {
+      id: Date.now().toString() + Math.random().toString(36).substr(2, 5),
+      title,
+      body,
+      schema,
+      timestamp: new Date(),
+      status: 'pending',
+    };
+    setNotifications(prev => [newNotif, ...prev]);
+    setExpandedId(newNotif.id);
+  }, []);
+
+  const markCompleted = useCallback((id: string) => {
+    setNotifications(prev =>
+      prev.map(n => n.id === id ? { ...n, status: 'completed' as const } : n)
+    );
+    setExpandedId(null);
+  }, []);
+
+  const clearCompleted = useCallback(() => {
+    setNotifications(prev => prev.filter(n => n.status !== 'completed'));
+  }, []);
+
+  const pendingCount = notifications.filter(n => n.status === 'pending').length;
+  const completedCount = notifications.filter(n => n.status === 'completed').length;
+
   useEffect(() => {
-    // Entrance fade-in
     Animated.timing(fadeAnim, {
       toValue: 1,
       duration: 800,
       useNativeDriver: true,
     }).start();
 
-    // Pulse animation for the status dot
     Animated.loop(
       Animated.sequence([
         Animated.timing(pulseAnim, { toValue: 1.4, duration: 1000, useNativeDriver: true }),
@@ -52,11 +87,12 @@ export default function HomeScreen() {
     });
 
     notificationListener.current = Notifications.addNotificationReceivedListener((notification: any) => {
-      const data = notification.request.content.data;
+      const content = notification.request.content;
+      const data = content.data;
       if (data && data.interactiveSchema) {
          try {
            const parsedSchema = JSON.parse(data.interactiveSchema);
-           setSchema(parsedSchema);
+           addNotification(content.title || 'Notification', content.body || '', parsedSchema);
          } catch(e) {
            console.log("Failed to parse schema", e);
          }
@@ -64,10 +100,12 @@ export default function HomeScreen() {
     });
 
     responseListener.current = Notifications.addNotificationResponseReceivedListener((response: any) => {
-      const data = response.notification.request.content.data;
+      const content = response.notification.request.content;
+      const data = content.data;
       if (data && data.interactiveSchema) {
          try {
-           setSchema(JSON.parse(data.interactiveSchema));
+           const parsedSchema = JSON.parse(data.interactiveSchema);
+           addNotification(content.title || 'Notification', content.body || '', parsedSchema);
          } catch(e) {}
       }
     });
@@ -81,6 +119,17 @@ export default function HomeScreen() {
       }
     };
   }, []);
+
+  const formatTime = (date: Date) => {
+    const now = new Date();
+    const diff = now.getTime() - date.getTime();
+    const mins = Math.floor(diff / 60000);
+    if (mins < 1) return 'Just now';
+    if (mins < 60) return `${mins}m ago`;
+    const hrs = Math.floor(mins / 60);
+    if (hrs < 24) return `${hrs}h ago`;
+    return `${Math.floor(hrs / 24)}d ago`;
+  };
 
   return (
     <View style={styles.background}>
@@ -114,22 +163,83 @@ export default function HomeScreen() {
           </Text>
         </View>
 
-        {/* Divider */}
+        {/* Notifications Header */}
         <View style={styles.dividerRow}>
           <View style={styles.dividerLine} />
-          <Text style={styles.dividerText}>NOTIFICATIONS</Text>
+          <Text style={styles.dividerText}>
+            NOTIFICATIONS{pendingCount > 0 ? ` (${pendingCount})` : ''}
+          </Text>
           <View style={styles.dividerLine} />
         </View>
 
-        {/* Interactive Schema / Waiting */}
-        {schema ? (
-          <View style={styles.schemaCard}>
-            <View style={styles.schemaHeader}>
-              <Text style={styles.schemaIcon}>⚡</Text>
-              <Text style={styles.schemaTitle}>Action Required</Text>
-            </View>
-            <View style={styles.schemaDivider} />
-            <ActionParser schema={schema} onActionCompleted={() => setSchema(null)} />
+        {/* Notification List */}
+        {notifications.length > 0 ? (
+          <View style={styles.notifList}>
+            {/* Clear completed button */}
+            {completedCount > 0 && (
+              <TouchableOpacity style={styles.clearButton} onPress={clearCompleted} activeOpacity={0.7}>
+                <Text style={styles.clearButtonText}>🗑️ Clear {completedCount} completed</Text>
+              </TouchableOpacity>
+            )}
+
+            {notifications.map((notif) => {
+              const isExpanded = expandedId === notif.id;
+              const isPending = notif.status === 'pending';
+
+              return (
+                <View key={notif.id} style={[
+                  styles.notifCard,
+                  isPending ? styles.notifCardPending : styles.notifCardCompleted,
+                ]}>
+                  {/* Notification Header — tappable to expand/collapse */}
+                  <TouchableOpacity
+                    onPress={() => setExpandedId(isExpanded ? null : notif.id)}
+                    activeOpacity={0.7}
+                    style={styles.notifHeader}
+                  >
+                    <View style={styles.notifHeaderLeft}>
+                      <Text style={styles.notifStatusIcon}>
+                        {isPending ? '⚡' : '✅'}
+                      </Text>
+                      <View style={styles.notifHeaderText}>
+                        <Text style={[
+                          styles.notifTitle,
+                          !isPending && styles.notifTitleCompleted,
+                        ]} numberOfLines={isExpanded ? undefined : 1}>
+                          {notif.title}
+                        </Text>
+                        {notif.body ? (
+                          <Text style={styles.notifBody} numberOfLines={isExpanded ? undefined : 1}>
+                            {notif.body}
+                          </Text>
+                        ) : null}
+                      </View>
+                    </View>
+                    <View style={styles.notifHeaderRight}>
+                      <Text style={styles.notifTime}>{formatTime(notif.timestamp)}</Text>
+                      <Text style={styles.notifChevron}>{isExpanded ? '▲' : '▼'}</Text>
+                    </View>
+                  </TouchableOpacity>
+
+                  {/* Expanded Content — shows interactive form */}
+                  {isExpanded && (
+                    <View style={styles.notifExpandedContent}>
+                      <View style={styles.notifExpandedDivider} />
+                      {isPending ? (
+                        <ActionParser
+                          schema={notif.schema}
+                          onActionCompleted={() => markCompleted(notif.id)}
+                        />
+                      ) : (
+                        <View style={styles.completedBadge}>
+                          <Text style={styles.completedBadgeText}>✅ Action completed</Text>
+                        </View>
+                      )}
+                    </View>
+                  )}
+                </View>
+              );
+            })}
           </View>
         ) : (
           <View style={styles.waitingCard}>
@@ -282,7 +392,7 @@ const styles = StyleSheet.create({
   dividerRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginBottom: 24,
+    marginBottom: 20,
   },
   dividerLine: {
     flex: 1,
@@ -296,38 +406,117 @@ const styles = StyleSheet.create({
     letterSpacing: 2,
     paddingHorizontal: 12,
   },
-  schemaCard: {
-    backgroundColor: '#1A1A2E',
-    borderRadius: 20,
-    padding: 24,
+
+  // Notification List
+  notifList: {
+    gap: 12,
+  },
+  clearButton: {
+    alignSelf: 'flex-end',
+    paddingVertical: 6,
+    paddingHorizontal: 14,
+    borderRadius: 8,
+    backgroundColor: 'rgba(239, 68, 68, 0.08)',
     borderWidth: 1,
+    borderColor: 'rgba(239, 68, 68, 0.2)',
+    marginBottom: 4,
+  },
+  clearButtonText: {
+    color: '#EF4444',
+    fontSize: 12,
+    fontWeight: '600',
+  },
+
+  // Notification Card
+  notifCard: {
+    backgroundColor: '#1A1A2E',
+    borderRadius: 16,
+    borderWidth: 1,
+    overflow: 'hidden',
+  },
+  notifCardPending: {
     borderColor: '#6C5CE7',
     shadowColor: '#6C5CE7',
     shadowOffset: { width: 0, height: 0 },
-    shadowOpacity: 0.15,
-    shadowRadius: 20,
-    elevation: 8,
+    shadowOpacity: 0.1,
+    shadowRadius: 12,
+    elevation: 4,
   },
-  schemaHeader: {
+  notifCardCompleted: {
+    borderColor: '#2A2A40',
+    opacity: 0.7,
+  },
+  notifHeader: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginBottom: 12,
+    justifyContent: 'space-between',
+    padding: 16,
   },
-  schemaIcon: {
-    fontSize: 20,
-    marginRight: 10,
+  notifHeaderLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flex: 1,
+    marginRight: 12,
   },
-  schemaTitle: {
+  notifStatusIcon: {
     fontSize: 20,
-    fontWeight: '800',
+    marginRight: 12,
+  },
+  notifHeaderText: {
+    flex: 1,
+  },
+  notifTitle: {
+    fontSize: 15,
+    fontWeight: '700',
     color: '#FFFFFF',
-    letterSpacing: 0.5,
+    letterSpacing: 0.3,
   },
-  schemaDivider: {
+  notifTitleCompleted: {
+    color: '#7B7FA0',
+    textDecorationLine: 'line-through',
+  },
+  notifBody: {
+    fontSize: 13,
+    color: '#7B7FA0',
+    marginTop: 2,
+  },
+  notifHeaderRight: {
+    alignItems: 'flex-end',
+    gap: 4,
+  },
+  notifTime: {
+    fontSize: 11,
+    color: '#4A4A6A',
+    fontWeight: '500',
+  },
+  notifChevron: {
+    fontSize: 10,
+    color: '#4A4A6A',
+  },
+
+  // Expanded Content
+  notifExpandedContent: {
+    paddingHorizontal: 16,
+    paddingBottom: 20,
+  },
+  notifExpandedDivider: {
     height: 1,
     backgroundColor: '#2A2A45',
     marginBottom: 16,
   },
+  completedBadge: {
+    backgroundColor: 'rgba(34, 197, 94, 0.08)',
+    borderRadius: 10,
+    padding: 14,
+    alignItems: 'center',
+  },
+  completedBadgeText: {
+    color: '#22C55E',
+    fontSize: 14,
+    fontWeight: '600',
+  },
+
+  // Waiting State
   waitingCard: {
     backgroundColor: '#1A1A2E',
     borderRadius: 20,
