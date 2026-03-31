@@ -15,7 +15,7 @@ Notifications.setNotificationHandler({
   }),
 });
 
-const BRIDGE_SERVER_URL = 'http://10.137.226.209:3000'; // Replace with actual IP
+const BRIDGE_SERVER_URL = 'https://universal-bridge.onrender.com';
 
 export default function HomeScreen() {
   const [expoPushToken, setExpoPushToken] = useState<string | undefined>('');
