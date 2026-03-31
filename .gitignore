@@ -6,7 +6,6 @@ node_modules/
 
 # Firebase secrets
 bridge-server/serviceAccountKey.json
-mobile-app/google-services.json
 mobile-app/universal-app-idea-firebase-adminsdk-fbsvc-ee46f2cdb1.json
 
 # Expo
