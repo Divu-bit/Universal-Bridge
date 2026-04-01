@@ -6,6 +6,16 @@ Universal Bridge is a plug-and-play notification infrastructure that lets develo
 
 **Live Server:** `https://universal-bridge.onrender.com`
 
+### ✨ Key Features
+
+- 🔔 **Native Push Notifications** — Delivered via Expo Push API
+- 🧩 **Interactive JSON Forms** — Buttons, text inputs, and display text rendered dynamically
+- 📋 **Notification History** — All notifications stack in a list with pending/completed status
+- 🔁 **Webhook Callbacks** — User responses fire HTTP POST to your server
+- 🏗️ **Multi-Service Support** — Multiple apps/websites can send notifications to the same user
+- 🔑 **API Key Auth** — Each developer gets a unique key
+- 🌙 **Dark Mode UI** — Premium dark-themed mobile interface
+
 ---
 
 ## 📐 Architecture
@@ -101,8 +111,10 @@ curl -X POST https://universal-bridge.onrender.com/api/notify \
 **What happens:**
 1. User's phone receives a native push notification
 2. User taps it → an interactive form renders inside the app
-3. User fills in fields and taps a button
-4. The app sends a `POST` to your `webhookUrl` with the user's response
+3. The notification is **added to the history list** (not overwritten)
+4. User fills in fields and taps a button
+5. The app sends a `POST` to your `webhookUrl` with the user's response
+6. The notification is marked as ✅ completed in the history
 
 ---
 
@@ -260,6 +272,33 @@ When a user taps a button, the app sends a `POST` request to the button's `webho
 |-------|------|-------------|
 | `action` | string | The `action` value from the button definition |
 | `data` | object | Key-value pairs from all `text_input` fields |
+
+---
+
+## 📱 Mobile App Features
+
+### Notification History
+
+The app maintains a **full history** of all received notifications. Each notification is displayed as an expandable card showing:
+
+- **Title & body** from the push notification
+- **Timestamp** (e.g., "Just now", "5m ago", "2h ago")
+- **Status indicator** — ⚡ Pending or ✅ Completed
+- **Interactive form** — expand any card to view/interact with the schema
+
+Completed notifications are dimmed with strikethrough text and can be bulk-cleared with the 🗑️ button.
+
+### Multi-Service Support
+
+Multiple websites/services can send notifications to the **same user** using the same API key. Each notification carries its own `webhookUrl`, so responses are routed independently:
+
+```
+Water Reminder App  ──► POST /api/notify ──► 📱 Phone ──► webhook → water-app.com/log
+Task Manager App    ──► POST /api/notify ──► 📱 Phone ──► webhook → tasks-app.com/done
+CI/CD Pipeline      ──► POST /api/notify ──► 📱 Phone ──► webhook → ci.example.com/approve
+```
+
+All three notifications stack in the user's history list — they can handle each one independently without any conflicts.
 
 ---
 
@@ -466,13 +505,14 @@ Universal-Bridge/
 ├── mobile-app/                 # React Native / Expo mobile app
 │   ├── app/
 │   │   ├── (tabs)/
-│   │   │   ├── index.tsx       # Home screen - token display & notification UI
+│   │   │   ├── index.tsx       # Home screen - notification history & token display
 │   │   │   └── explore.tsx     # Explore tab
 │   │   └── _layout.tsx         # Root layout with theme provider
 │   ├── components/
 │   │   └── ActionParser.tsx    # Renders interactive forms from JSON schema
 │   ├── app.json                # Expo config
 │   ├── eas.json                # EAS Build config (APK/AAB profiles)
+│   ├── google-services.json    # Firebase config for Android (not in repo)
 │   └── package.json
 │
 ├── .gitignore
@@ -526,6 +566,8 @@ To deploy your own instance:
 
 6. **Build the mobile app:**
    - Update `BRIDGE_SERVER_URL` in `mobile-app/app/(tabs)/index.tsx`
+   - Place your `google-services.json` in the `mobile-app/` directory (download from Firebase Console)
+   - Upload `google-services.json` as an EAS Secret file variable, or temporarily add it to git for the build
    - Run `npx eas build --platform android --profile preview` for APK
 
 ---
