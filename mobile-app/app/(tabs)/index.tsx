@@ -1,6 +1,7 @@
 import { useEffect, useState, useRef, useCallback } from 'react';
 import { StyleSheet, Text, View, ScrollView, Platform, Animated, TouchableOpacity, Alert, Share } from 'react-native';
 import * as Clipboard from 'expo-clipboard';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Device from 'expo-device';
 import * as Notifications from 'expo-notifications';
 import Constants from 'expo-constants';
@@ -33,6 +34,7 @@ export default function HomeScreen() {
   const [copied, setCopied] = useState(false);
   const [notifications, setNotifications] = useState<NotificationItem[]>([]);
   const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [isDataLoaded, setIsDataLoaded] = useState(false);
   const notificationListener = useRef<any>(null);
   const responseListener = useRef<any>(null);
   const pulseAnim = useRef(new Animated.Value(1)).current;
@@ -66,6 +68,32 @@ export default function HomeScreen() {
   const completedCount = notifications.filter(n => n.status === 'completed').length;
 
   useEffect(() => {
+    const loadData = async () => {
+      try {
+        const storedUserId = await AsyncStorage.getItem('@appUserId');
+        if (storedUserId) setAppUserId(storedUserId);
+
+        const storedNotifs = await AsyncStorage.getItem('@notifications');
+        if (storedNotifs) {
+          const parsed = JSON.parse(storedNotifs);
+          setNotifications(parsed.map((n: any) => ({ ...n, timestamp: new Date(n.timestamp) })));
+        }
+      } catch (e) {
+        console.error('Failed to load storage', e);
+      } finally {
+        setIsDataLoaded(true);
+      }
+    };
+    loadData();
+  }, []);
+
+  useEffect(() => {
+    if (isDataLoaded) {
+      AsyncStorage.setItem('@notifications', JSON.stringify(notifications)).catch(console.error);
+    }
+  }, [notifications, isDataLoaded]);
+
+  useEffect(() => {
     Animated.timing(fadeAnim, {
       toValue: 1,
       duration: 800,
@@ -82,15 +110,18 @@ export default function HomeScreen() {
     registerForPushNotificationsAsync().then((token) => {
        setExpoPushToken(token);
        if(token) {
-          axios.post(`${BRIDGE_SERVER_URL}/api/users/register`, {
-            pushToken: token
-          }).then(res => {
-            console.log('Registered user', res.data);
-            if (res.data.appUserId) {
-              setAppUserId(res.data.appUserId);
-            }
-          })
-            .catch(err => console.log('Register failed. Server might be off or IP is wrong.'));
+          AsyncStorage.getItem('@appUserId').then(storedUserId => {
+            axios.post(`${BRIDGE_SERVER_URL}/api/users/register`, {
+              pushToken: token,
+              ...(storedUserId ? { appUserId: storedUserId } : {})
+            }).then(res => {
+              console.log('Registered user', res.data);
+              if (res.data.appUserId) {
+                setAppUserId(res.data.appUserId);
+                AsyncStorage.setItem('@appUserId', res.data.appUserId).catch(console.error);
+              }
+            }).catch(err => console.log('Register failed. Server might be off or IP is wrong.'));
+          }).catch(console.error);
        }
     });
 
