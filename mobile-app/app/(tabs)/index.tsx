@@ -1,5 +1,6 @@
 import { useEffect, useState, useRef, useCallback } from 'react';
-import { StyleSheet, Text, View, ScrollView, Platform, Animated, TouchableOpacity } from 'react-native';
+import { StyleSheet, Text, View, ScrollView, Platform, Animated, TouchableOpacity, Alert, Share } from 'react-native';
+import * as Clipboard from 'expo-clipboard';
 import * as Device from 'expo-device';
 import * as Notifications from 'expo-notifications';
 import Constants from 'expo-constants';
@@ -28,6 +29,8 @@ interface NotificationItem {
 
 export default function HomeScreen() {
   const [expoPushToken, setExpoPushToken] = useState<string | undefined>('');
+  const [appUserId, setAppUserId] = useState<string>('');
+  const [copied, setCopied] = useState(false);
   const [notifications, setNotifications] = useState<NotificationItem[]>([]);
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const notificationListener = useRef<any>(null);
@@ -81,7 +84,12 @@ export default function HomeScreen() {
        if(token) {
           axios.post(`${BRIDGE_SERVER_URL}/api/users/register`, {
             pushToken: token
-          }).then(res => console.log('Registered user', res.data))
+          }).then(res => {
+            console.log('Registered user', res.data);
+            if (res.data.appUserId) {
+              setAppUserId(res.data.appUserId);
+            }
+          })
             .catch(err => console.log('Register failed. Server might be off or IP is wrong.'));
        }
     });
@@ -152,16 +160,52 @@ export default function HomeScreen() {
           </View>
         </View>
 
-        {/* Token Card */}
-        <View style={styles.card}>
+        {/* User ID Card — This is what developers need */}
+        <View style={styles.userIdCard}>
           <View style={styles.cardHeader}>
-            <Text style={styles.cardIcon}>🔑</Text>
-            <Text style={styles.cardTitle}>Push Token</Text>
+            <Text style={styles.cardIcon}>👤</Text>
+            <Text style={styles.cardTitle}>Your User ID</Text>
           </View>
-          <Text selectable style={styles.token}>
-            {expoPushToken || "Fetching token..."}
+          <Text style={styles.userIdHint}>
+            Share this ID with any app to receive notifications
           </Text>
+          <View style={styles.userIdRow}>
+            <Text selectable style={styles.userId}>
+              {appUserId || 'Connecting...'}
+            </Text>
+            <TouchableOpacity
+              style={[styles.copyButton, copied && styles.copyButtonDone]}
+              onPress={async () => {
+                if (appUserId) {
+                  await Clipboard.setStringAsync(appUserId);
+                  setCopied(true);
+                  setTimeout(() => setCopied(false), 2000);
+                }
+              }}
+              activeOpacity={0.7}
+            >
+              <Text style={[styles.copyButtonText, copied && styles.copyButtonTextDone]}>
+                {copied ? '✓ Copied' : '📋 Copy'}
+              </Text>
+            </TouchableOpacity>
+          </View>
         </View>
+
+        {/* Push Token — smaller, for debugging */}
+        <TouchableOpacity
+          style={styles.tokenRow}
+          onPress={() => {
+            if (expoPushToken) {
+              Share.share({ message: expoPushToken });
+            }
+          }}
+          activeOpacity={0.7}
+        >
+          <Text style={styles.tokenLabel}>🔑 Push Token</Text>
+          <Text style={styles.tokenValue} numberOfLines={1}>
+            {expoPushToken || 'Fetching...'}
+          </Text>
+        </TouchableOpacity>
 
         {/* Notifications Header */}
         <View style={styles.dividerRow}>
@@ -377,6 +421,82 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: '#E0E0F0',
     letterSpacing: 0.5,
+  },
+  userIdCard: {
+    backgroundColor: '#1A1A2E',
+    borderRadius: 16,
+    padding: 20,
+    marginBottom: 12,
+    borderWidth: 1,
+    borderColor: '#6C5CE7',
+    shadowColor: '#6C5CE7',
+    shadowOffset: { width: 0, height: 0 },
+    shadowOpacity: 0.1,
+    shadowRadius: 12,
+    elevation: 4,
+  },
+  userIdHint: {
+    fontSize: 12,
+    color: '#5A5A7A',
+    marginBottom: 12,
+  },
+  userIdRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  userId: {
+    flex: 1,
+    fontSize: 14,
+    color: '#A78BFA',
+    backgroundColor: '#12121F',
+    padding: 12,
+    borderRadius: 10,
+    fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
+    fontWeight: '600',
+    borderWidth: 1,
+    borderColor: '#1E1E35',
+  },
+  copyButton: {
+    backgroundColor: 'rgba(108, 92, 231, 0.12)',
+    borderWidth: 1,
+    borderColor: 'rgba(108, 92, 231, 0.35)',
+    borderRadius: 10,
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+  },
+  copyButtonDone: {
+    backgroundColor: 'rgba(34, 197, 94, 0.12)',
+    borderColor: 'rgba(34, 197, 94, 0.35)',
+  },
+  copyButtonText: {
+    color: '#A78BFA',
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  copyButtonTextDone: {
+    color: '#22C55E',
+  },
+  tokenRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#12121F',
+    borderRadius: 10,
+    padding: 10,
+    paddingHorizontal: 14,
+    marginBottom: 20,
+    gap: 8,
+  },
+  tokenLabel: {
+    fontSize: 11,
+    color: '#4A4A6A',
+    fontWeight: '600',
+  },
+  tokenValue: {
+    flex: 1,
+    fontSize: 10,
+    color: '#3A3A5A',
+    fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
   },
   token: {
     fontSize: 11,
