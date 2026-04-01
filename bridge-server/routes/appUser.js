@@ -18,7 +18,22 @@ router.post('/register', async (req, res) => {
         return res.status(200).json({ message: 'User updated/retrieved', appUserId: user.appUserId, pushToken: user.pushToken });
       }
     }
+
+    // If appUserId wasn't provided (e.g. app restarted), check if we already have this pushToken
+    if (pushToken) {
+      let user = await AppUser.findOne({ pushToken });
+      if (user) {
+         // If they provided a new appUserId, update it (rare)
+         if (appUserId && user.appUserId !== appUserId) {
+             user.appUserId = appUserId;
+             user.updatedAt = Date.now();
+             await user.save();
+         }
+         return res.status(200).json({ message: 'User retrieved by pushToken', appUserId: user.appUserId, pushToken: user.pushToken });
+      }
+    }
     
+    // Default fallback: Create a new user
     const newUser = new AppUser({ pushToken });
     if (appUserId) {
       newUser.appUserId = appUserId;
