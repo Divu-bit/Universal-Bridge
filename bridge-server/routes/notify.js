@@ -96,5 +96,15 @@ router.patch('/:notificationId/complete', async (req, res) => {
   }
 });
 
+// DELETE — Remove a notification permanently
+router.delete('/:notificationId', async (req, res) => {
+  try {
+    await Notification.findByIdAndDelete(req.params.notificationId);
+    res.json({ success: true });
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to delete notification' });
+  }
+});
+
 module.exports = router;
 

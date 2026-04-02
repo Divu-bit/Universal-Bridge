@@ -121,7 +121,16 @@ export default function HomeScreen() {
   }, []);
 
   const clearCompleted = useCallback(() => {
-    setNotifications(prev => prev.filter(n => n.status !== 'completed'));
+    setNotifications(prev => {
+      const completed = prev.filter(n => n.status === 'completed');
+      // Delete each completed notification from server
+      completed.forEach(n => {
+        if (n.notificationId) {
+          axios.delete(`${BRIDGE_SERVER_URL}/api/notify/${n.notificationId}`).catch(console.error);
+        }
+      });
+      return prev.filter(n => n.status !== 'completed');
+    });
   }, []);
 
   const pendingCount = notifications.filter(n => n.status === 'pending').length;
