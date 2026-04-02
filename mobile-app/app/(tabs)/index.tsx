@@ -1,5 +1,5 @@
 import { useEffect, useState, useRef, useCallback } from 'react';
-import { StyleSheet, Text, View, ScrollView, Platform, Animated, TouchableOpacity, Alert, Share } from 'react-native';
+import { StyleSheet, Text, View, ScrollView, Platform, Animated, TouchableOpacity, Alert, Share, AppState } from 'react-native';
 import * as Clipboard from 'expo-clipboard';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Device from 'expo-device';
@@ -39,19 +39,49 @@ export default function HomeScreen() {
   const responseListener = useRef<any>(null);
   const pulseAnim = useRef(new Animated.Value(1)).current;
   const fadeAnim = useRef(new Animated.Value(0)).current;
+  const lastNotificationResponse = Notifications.useLastNotificationResponse();
 
-  const addNotification = useCallback((title: string, body: string, schema: any[]) => {
-    const newNotif: NotificationItem = {
-      id: Date.now().toString() + Math.random().toString(36).substr(2, 5),
-      title,
-      body,
-      schema,
-      timestamp: new Date(),
-      status: 'pending',
-    };
-    setNotifications(prev => [newNotif, ...prev]);
-    setExpandedId(newNotif.id);
+  const addNotification = useCallback((title: string, body: string, schema: any[], identifier?: string) => {
+    const targetId = identifier || (Date.now().toString() + Math.random().toString(36).substr(2, 5));
+    
+    setNotifications(prev => {
+      if (identifier && prev.some(n => n.id === identifier)) {
+        return prev;
+      }
+      
+      const newNotif: NotificationItem = {
+        id: targetId,
+        title,
+        body,
+        schema,
+        timestamp: new Date(),
+        status: 'pending',
+      };
+      return [newNotif, ...prev];
+    });
+    setExpandedId(targetId);
   }, []);
+
+  const processNotificationContent = useCallback((content: any, identifier: string) => {
+    const data = content.data;
+    if (data && data.interactiveSchema) {
+       try {
+         const parsedSchema = JSON.parse(data.interactiveSchema);
+         addNotification(content.title || 'Notification', content.body || '', parsedSchema, identifier);
+       } catch(e) {
+         console.log("Failed to parse schema", e);
+       }
+    }
+  }, [addNotification]);
+
+  useEffect(() => {
+    if (lastNotificationResponse && lastNotificationResponse.notification) {
+      processNotificationContent(
+          lastNotificationResponse.notification.request.content,
+          lastNotificationResponse.notification.request.identifier
+      );
+    }
+  }, [lastNotificationResponse, processNotificationContent]);
 
   const markCompleted = useCallback((id: string) => {
     setNotifications(prev =>
@@ -125,37 +155,53 @@ export default function HomeScreen() {
        }
     });
 
-    notificationListener.current = Notifications.addNotificationReceivedListener((notification: any) => {
-      const content = notification.request.content;
-      const data = content.data;
-      if (data && data.interactiveSchema) {
-         try {
-           const parsedSchema = JSON.parse(data.interactiveSchema);
-           addNotification(content.title || 'Notification', content.body || '', parsedSchema);
-         } catch(e) {
-           console.log("Failed to parse schema", e);
-         }
+    // 1. Check for last notification response upon cold start (when app was killed and user tapped on a tray notification)
+    // Removed because we are now utilizing Notifications.useLastNotificationResponse() hook
+    
+    // 2. Fetch notifications currently in the tray (received while app was backgrounded)
+    const fetchPresented = async () => {
+      try {
+        const presented = await Notifications.getPresentedNotificationsAsync();
+        presented.forEach(notification => {
+          processNotificationContent(
+            notification.request.content,
+            notification.request.identifier
+          );
+        });
+      } catch (e) {
+        console.log("Error fetching presented notifications", e);
       }
+    };
+    
+    // Call it initially
+    fetchPresented();
+
+    // 3. Listen to AppState to fetch presented when coming to foreground
+    const appStateSubscription = AppState.addEventListener('change', nextAppState => {
+      if (nextAppState === 'active') {
+        fetchPresented();
+      }
+    });
+
+    // 4. Subscriptions for foreground receiving and response handling
+    notificationListener.current = Notifications.addNotificationReceivedListener((notification: any) => {
+      processNotificationContent(
+          notification.request.content,
+          notification.request.identifier
+      );
     });
 
     responseListener.current = Notifications.addNotificationResponseReceivedListener((response: any) => {
-      const content = response.notification.request.content;
-      const data = content.data;
-      if (data && data.interactiveSchema) {
-         try {
-           const parsedSchema = JSON.parse(data.interactiveSchema);
-           addNotification(content.title || 'Notification', content.body || '', parsedSchema);
-         } catch(e) {}
-      }
+      processNotificationContent(
+          response.notification.request.content,
+          response.notification.request.identifier
+      );
     });
 
     return () => {
-      if (notificationListener.current) {
-         notificationListener.current.remove();
-      }
-      if (responseListener.current) {
-         responseListener.current.remove();
-      }
+      if (notificationListener.current) notificationListener.current.remove();
+      if (responseListener.current) responseListener.current.remove();
+      appStateSubscription.remove();
     };
   }, []);
 
