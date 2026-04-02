@@ -92,14 +92,17 @@ export default function HomeScreen() {
     }
   }, [addNotification]);
 
+  // Process the hook-based last notification response, but ONLY after data is loaded
+  // to prevent the race condition where loadData overwrites the notification.
   useEffect(() => {
+    if (!isDataLoaded) return;
     if (lastNotificationResponse && lastNotificationResponse.notification) {
       processNotificationContent(
           lastNotificationResponse.notification.request.content,
           lastNotificationResponse.notification.request.identifier
       );
     }
-  }, [lastNotificationResponse, processNotificationContent]);
+  }, [lastNotificationResponse, processNotificationContent, isDataLoaded]);
 
   const markCompleted = useCallback((id: string) => {
     setNotifications(prev =>
@@ -141,6 +144,7 @@ export default function HomeScreen() {
     }
   }, [notifications, isDataLoaded]);
 
+  // ========== ANIMATIONS & REGISTRATION (runs once on mount) ==========
   useEffect(() => {
     Animated.timing(fadeAnim, {
       toValue: 1,
@@ -173,10 +177,39 @@ export default function HomeScreen() {
        }
     });
 
+    // Foreground listener — always safe, app is active so data is loaded
+    notificationListener.current = Notifications.addNotificationReceivedListener((notification: any) => {
+      processNotificationContent(
+          notification.request.content,
+          notification.request.identifier
+      );
+    });
+
+    // Response listener for taps while app is in foreground/background
+    responseListener.current = Notifications.addNotificationResponseReceivedListener((response: any) => {
+      processNotificationContent(
+          response.notification.request.content,
+          response.notification.request.identifier
+      );
+    });
+
+    return () => {
+      if (notificationListener.current) notificationListener.current.remove();
+      if (responseListener.current) responseListener.current.remove();
+    };
+  }, []);
+
+  // ========== COLD-START & BACKGROUND PROCESSING (runs AFTER data is loaded) ==========
+  // This is the critical fix: we must wait for AsyncStorage data to finish loading
+  // before we inject cold-start/background notifications into state, otherwise
+  // loadData's setNotifications() will overwrite them.
+  useEffect(() => {
+    if (!isDataLoaded) return;
+
     // 1. COLD START — Process notification captured at module level (before React mounted)
     if (coldStartNotificationResponse) {
       const resp = coldStartNotificationResponse;
-      coldStartNotificationResponse = null; // consume it so it's not processed twice
+      coldStartNotificationResponse = null;
       processNotificationContent(
         resp.notification.request.content,
         resp.notification.request.identifier
@@ -192,8 +225,8 @@ export default function HomeScreen() {
         );
       }
     });
-    
-    // 2. Fetch notifications currently in the tray (received while app was backgrounded)
+
+    // 3. Fetch notifications currently in the tray (received while app was backgrounded)
     const fetchPresented = async () => {
       try {
         const presented = await Notifications.getPresentedNotificationsAsync();
@@ -207,38 +240,19 @@ export default function HomeScreen() {
         console.log("Error fetching presented notifications", e);
       }
     };
-    
-    // Call it initially
     fetchPresented();
 
-    // 3. Listen to AppState to fetch presented when coming to foreground
+    // 4. Listen to AppState to re-fetch presented when coming back to foreground
     const appStateSubscription = AppState.addEventListener('change', nextAppState => {
       if (nextAppState === 'active') {
         fetchPresented();
       }
     });
 
-    // 4. Subscriptions for foreground receiving and response handling
-    notificationListener.current = Notifications.addNotificationReceivedListener((notification: any) => {
-      processNotificationContent(
-          notification.request.content,
-          notification.request.identifier
-      );
-    });
-
-    responseListener.current = Notifications.addNotificationResponseReceivedListener((response: any) => {
-      processNotificationContent(
-          response.notification.request.content,
-          response.notification.request.identifier
-      );
-    });
-
     return () => {
-      if (notificationListener.current) notificationListener.current.remove();
-      if (responseListener.current) responseListener.current.remove();
       appStateSubscription.remove();
     };
-  }, []);
+  }, [isDataLoaded]);
 
   const formatTime = (date: Date) => {
     const now = new Date();
