@@ -32,15 +32,19 @@ app.post('/test-webhook', (req, res) => {
   res.json({ success: true });
 });
 
-// Database Connection
-if (process.env.MONGODB_URI) {
-  mongoose.connect(process.env.MONGODB_URI)
-    .then(() => console.log('MongoDB connected'))
-    .catch(err => console.error('MongoDB connection error:', err));
-} else {
-  console.log('No MONGODB_URI provided in .env');
-}
-
-app.listen(PORT, '0.0.0.0', () => {
+// Start Server First (For Render Hibernate Wake)
+app.listen(PORT, '0.0.0.0', async () => {
     console.log(`Server running on port ${PORT}`);
+    
+    // Database Connection
+    if (process.env.MONGODB_URI) {
+        try {
+            await mongoose.connect(process.env.MONGODB_URI);
+            console.log('MongoDB connected');
+        } catch (err) {
+            console.error('MongoDB connection error:', err);
+        }
+    } else {
+        console.log('No MONGODB_URI provided in .env');
+    }
 });
