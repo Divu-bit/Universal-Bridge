@@ -17,6 +17,24 @@ Notifications.setNotificationHandler({
   }),
 });
 
+// ============================================================
+// MODULE-LEVEL cold-start catcher — runs BEFORE React mounts.
+// This is critical: on Android standalone APKs, when the app is
+// fully killed and user taps a notification, the response event
+// fires before any React component useEffect can register a
+// listener. We catch it here at the JS module level.
+// ============================================================
+let coldStartNotificationResponse: Notifications.NotificationResponse | null = null;
+const coldStartListener = Notifications.addNotificationResponseReceivedListener((response) => {
+  coldStartNotificationResponse = response;
+});
+// We only need this to capture the very first response, so we
+// remove it after a short window (the component will set up its
+// own listener in useEffect).
+setTimeout(() => {
+  coldStartListener.remove();
+}, 5000);
+
 const BRIDGE_SERVER_URL = 'https://universal-bridge.onrender.com';
 
 interface NotificationItem {
@@ -155,8 +173,25 @@ export default function HomeScreen() {
        }
     });
 
-    // 1. Check for last notification response upon cold start (when app was killed and user tapped on a tray notification)
-    // Removed because we are now utilizing Notifications.useLastNotificationResponse() hook
+    // 1. COLD START — Process notification captured at module level (before React mounted)
+    if (coldStartNotificationResponse) {
+      const resp = coldStartNotificationResponse;
+      coldStartNotificationResponse = null; // consume it so it's not processed twice
+      processNotificationContent(
+        resp.notification.request.content,
+        resp.notification.request.identifier
+      );
+    }
+
+    // 2. FALLBACK — Also check via async API in case the module-level listener missed it
+    Notifications.getLastNotificationResponseAsync().then(response => {
+      if (response && response.notification) {
+        processNotificationContent(
+          response.notification.request.content,
+          response.notification.request.identifier
+        );
+      }
+    });
     
     // 2. Fetch notifications currently in the tray (received while app was backgrounded)
     const fetchPresented = async () => {
