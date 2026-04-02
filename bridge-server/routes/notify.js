@@ -3,6 +3,7 @@ const router = express.Router();
 const admin = require('../firebase');
 const Developer = require('../models/Developer');
 const AppUser = require('../models/AppUser');
+const Notification = require('../models/Notification');
 
 router.post('/', async (req, res) => {
   try {
@@ -25,18 +26,29 @@ router.post('/', async (req, res) => {
         return res.status(404).json({ error: 'User not found or has no active push token' });
     }
 
-    // 4. Construct message for Expo Push API since we are using Expo Go for testing
+    // 4. Save notification to database
+    const savedNotif = await Notification.create({
+      targetUserId,
+      title,
+      body: body || '',
+      interactiveSchema: interactiveSchema || null,
+      status: 'pending',
+    });
+
+    // 5. Construct message for Expo Push API
     const message = {
       to: user.pushToken,
       sound: 'default',
       title: title,
       body: body || '',
       data: {
-        interactiveSchema: interactiveSchema ? JSON.stringify(interactiveSchema) : ''
+        notificationId: savedNotif._id.toString(),
+        interactiveSchema: interactiveSchema ? JSON.stringify(interactiveSchema) : '',
+        createdAt: savedNotif.createdAt.toISOString(),
       }
     };
 
-    // 5. Send Notification via Expo Push Service
+    // 6. Send Notification via Expo Push Service
     const response = await fetch('https://exp.host/--/api/v2/push/send', {
       method: 'POST',
       headers: {
@@ -48,7 +60,7 @@ router.post('/', async (req, res) => {
     });
     
     const result = await response.json();
-    res.status(200).json({ success: true, messageId: result });
+    res.status(200).json({ success: true, messageId: result, notificationId: savedNotif._id });
 
   } catch (error) {
     console.error('Push error:', error);
@@ -56,4 +68,33 @@ router.post('/', async (req, res) => {
   }
 });
 
+// GET — Fetch all notifications for a user (mobile app calls this on startup)
+router.get('/:userId', async (req, res) => {
+  try {
+    const notifications = await Notification.find({ targetUserId: req.params.userId })
+      .sort({ createdAt: -1 })
+      .limit(50);
+    res.json(notifications);
+  } catch (error) {
+    console.error('Fetch notifications error:', error);
+    res.status(500).json({ error: 'Failed to fetch notifications' });
+  }
+});
+
+// PATCH — Mark a notification as completed
+router.patch('/:notificationId/complete', async (req, res) => {
+  try {
+    const notif = await Notification.findByIdAndUpdate(
+      req.params.notificationId,
+      { status: 'completed' },
+      { new: true }
+    );
+    if (!notif) return res.status(404).json({ error: 'Notification not found' });
+    res.json(notif);
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to update notification' });
+  }
+});
+
 module.exports = router;
+

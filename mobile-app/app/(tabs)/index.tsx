@@ -39,6 +39,7 @@ const BRIDGE_SERVER_URL = 'https://universal-bridge.onrender.com';
 
 interface NotificationItem {
   id: string;
+  notificationId?: string;
   title: string;
   body: string;
   schema: any[];
@@ -59,7 +60,7 @@ export default function HomeScreen() {
   const fadeAnim = useRef(new Animated.Value(0)).current;
   const lastNotificationResponse = Notifications.useLastNotificationResponse();
 
-  const addNotification = useCallback((title: string, body: string, schema: any[], identifier?: string) => {
+  const addNotification = useCallback((title: string, body: string, schema: any[], identifier?: string, timestamp?: Date, notificationId?: string) => {
     const targetId = identifier || (Date.now().toString() + Math.random().toString(36).substr(2, 5));
     
     setNotifications(prev => {
@@ -69,10 +70,11 @@ export default function HomeScreen() {
       
       const newNotif: NotificationItem = {
         id: targetId,
+        notificationId,
         title,
         body,
         schema,
-        timestamp: new Date(),
+        timestamp: timestamp || new Date(),
         status: 'pending',
       };
       return [newNotif, ...prev];
@@ -85,7 +87,9 @@ export default function HomeScreen() {
     if (data && data.interactiveSchema) {
        try {
          const parsedSchema = JSON.parse(data.interactiveSchema);
-         addNotification(content.title || 'Notification', content.body || '', parsedSchema, identifier);
+         const timestamp = data.createdAt ? new Date(data.createdAt) : new Date();
+         const notificationId = data.notificationId || undefined;
+         addNotification(content.title || 'Notification', content.body || '', parsedSchema, identifier, timestamp, notificationId);
        } catch(e) {
          console.log("Failed to parse schema", e);
        }
@@ -105,9 +109,14 @@ export default function HomeScreen() {
   }, [lastNotificationResponse, processNotificationContent, isDataLoaded]);
 
   const markCompleted = useCallback((id: string) => {
-    setNotifications(prev =>
-      prev.map(n => n.id === id ? { ...n, status: 'completed' as const } : n)
-    );
+    setNotifications(prev => {
+      const target = prev.find(n => n.id === id);
+      // Sync completion to server if we have a server-side notificationId
+      if (target?.notificationId) {
+        axios.patch(`${BRIDGE_SERVER_URL}/api/notify/${target.notificationId}/complete`).catch(console.error);
+      }
+      return prev.map(n => n.id === id ? { ...n, status: 'completed' as const } : n);
+    });
     setExpandedId(null);
   }, []);
 
@@ -226,7 +235,37 @@ export default function HomeScreen() {
       }
     });
 
-    // 3. Fetch notifications currently in the tray (received while app was backgrounded)
+    // 3. Fetch notifications from server database (the reliable source of truth)
+    const fetchFromServer = async () => {
+      try {
+        const userId = appUserId || await AsyncStorage.getItem('@appUserId');
+        if (!userId) return;
+        const res = await axios.get(`${BRIDGE_SERVER_URL}/api/notify/${userId}`);
+        const serverNotifs = res.data;
+        if (Array.isArray(serverNotifs)) {
+          serverNotifs.forEach((sn: any) => {
+            if (sn.interactiveSchema && sn.status === 'pending') {
+              const schema = typeof sn.interactiveSchema === 'string'
+                ? JSON.parse(sn.interactiveSchema)
+                : sn.interactiveSchema;
+              addNotification(
+                sn.title,
+                sn.body || '',
+                schema,
+                sn._id, // use server _id as the unique identifier
+                new Date(sn.createdAt),
+                sn._id
+              );
+            }
+          });
+        }
+      } catch (e) {
+        console.log('Failed to fetch notifications from server', e);
+      }
+    };
+    fetchFromServer();
+
+    // 4. Fetch notifications currently in the tray (received while app was backgrounded)
     const fetchPresented = async () => {
       try {
         const presented = await Notifications.getPresentedNotificationsAsync();
